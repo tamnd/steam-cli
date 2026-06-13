@@ -1,52 +1,92 @@
-// Package steam is the library behind the steam command line:
-// the HTTP client, request shaping, and the typed data models for steam.
+// Package steam is the library behind the steam command: the HTTP client,
+// request shaping, and typed data models for the Steam game store.
 //
-// The Client here is the spine every command shares. It sets a real
-// User-Agent, paces requests so a busy session stays polite, and retries the
-// transient failures (429 and 5xx) that any public site throws under load.
-// Build your endpoint calls and JSON decoding on top of it.
+// Two base APIs:
+//   - https://store.steampowered.com/api — store catalog (no key required)
+//   - appreviews endpoint on store.steampowered.com (no key required)
 package steam
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
-// DefaultUserAgent identifies the client to steam. A real, honest
-// User-Agent is both polite and the thing most likely to keep you unblocked.
+const (
+	storeBase      = "https://store.steampowered.com"
+	defaultAPIBase = "https://store.steampowered.com/api"
+)
+
+// DefaultUserAgent identifies the client to Steam.
 const DefaultUserAgent = "steam/dev (+https://github.com/tamnd/steam-cli)"
 
-// Client talks to steam over HTTP.
-type Client struct {
-	HTTP      *http.Client
-	UserAgent string
-	// Rate is the minimum gap between requests. Zero means no pacing.
-	Rate    time.Duration
-	Retries int
+// ErrNotFound is returned when an app is unavailable or the API returns no data.
+var ErrNotFound = errors.New("not found")
 
-	last time.Time
+// Client talks to the Steam store APIs.
+type Client struct {
+	httpClient *http.Client
+	userAgent  string
+	rate       time.Duration
+	retries    int
+	baseURL    string // e.g. https://store.steampowered.com/api
+	storeRoot  string // e.g. https://store.steampowered.com
+	mu         sync.Mutex
+	last       time.Time
 }
 
-// NewClient returns a Client with sensible defaults: a 30s timeout, a 200ms
-// minimum gap between requests, and five retries on transient errors.
-func NewClient() *Client {
-	return &Client{
-		HTTP:      &http.Client{Timeout: 30 * time.Second},
+// Config holds constructor parameters.
+type Config struct {
+	UserAgent string
+	Rate      time.Duration
+	Retries   int
+	Timeout   time.Duration
+	// BaseURL overrides the Steam store API base for testing.
+	// Defaults to "https://store.steampowered.com/api".
+	BaseURL string
+}
+
+// DefaultConfig returns sensible defaults.
+func DefaultConfig() Config {
+	return Config{
 		UserAgent: DefaultUserAgent,
 		Rate:      200 * time.Millisecond,
-		Retries:   5,
+		Retries:   3,
+		Timeout:   30 * time.Second,
+		BaseURL:   defaultAPIBase,
 	}
 }
 
-// Get fetches url and returns the response body. It paces and retries according
-// to the client's settings. The caller owns nothing extra; the body is read
-// fully and closed here.
-func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
+// NewClient returns a Client configured from cfg.
+func NewClient(cfg Config) *Client {
+	base := cfg.BaseURL
+	if base == "" {
+		base = defaultAPIBase
+	}
+	// Derive storeRoot: strip trailing "/api" suffix if present.
+	root := strings.TrimSuffix(base, "/api")
+	return &Client{
+		httpClient: &http.Client{Timeout: cfg.Timeout},
+		userAgent:  cfg.UserAgent,
+		rate:       cfg.Rate,
+		retries:    cfg.Retries,
+		baseURL:    base,
+		storeRoot:  root,
+	}
+}
+
+// get fetches a URL with pacing and retries.
+func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
 	var lastErr error
-	for attempt := 0; attempt <= c.Retries; attempt++ {
+	for attempt := 0; attempt <= c.retries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
@@ -54,7 +94,7 @@ func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
 			case <-time.After(backoff(attempt)):
 			}
 		}
-		body, retry, err := c.do(ctx, url)
+		body, retry, err := c.do(ctx, rawURL)
 		if err == nil {
 			return body, nil
 		}
@@ -63,18 +103,19 @@ func (c *Client) Get(ctx context.Context, url string) ([]byte, error) {
 			return nil, err
 		}
 	}
-	return nil, fmt.Errorf("get %s: %w", url, lastErr)
+	return nil, fmt.Errorf("get %s: %w", rawURL, lastErr)
 }
 
-func (c *Client) do(ctx context.Context, url string) (body []byte, retry bool, err error) {
+func (c *Client) do(ctx context.Context, rawURL string) ([]byte, bool, error) {
 	c.pace()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, false, err
 	}
-	req.Header.Set("User-Agent", c.UserAgent)
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, true, err
 	}
@@ -86,20 +127,20 @@ func (c *Client) do(ctx context.Context, url string) (body []byte, retry bool, e
 	if resp.StatusCode != http.StatusOK {
 		return nil, false, fmt.Errorf("http %d", resp.StatusCode)
 	}
-
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return nil, true, err
 	}
 	return b, false, nil
 }
 
-// pace blocks until at least Rate has passed since the previous request.
 func (c *Client) pace() {
-	if c.Rate <= 0 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rate <= 0 {
 		return
 	}
-	if wait := c.Rate - time.Since(c.last); wait > 0 {
+	if wait := c.rate - time.Since(c.last); wait > 0 {
 		time.Sleep(wait)
 	}
 	c.last = time.Now()
@@ -111,4 +152,213 @@ func backoff(attempt int) time.Duration {
 		d = 5 * time.Second
 	}
 	return d
+}
+
+// getJSON fetches and JSON-decodes into v. Returns ErrNotFound when the body is null.
+func (c *Client) getJSON(ctx context.Context, rawURL string, v any) error {
+	body, err := c.get(ctx, rawURL)
+	if err != nil {
+		return err
+	}
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "null" {
+		return ErrNotFound
+	}
+	if err := json.Unmarshal(body, v); err != nil {
+		return fmt.Errorf("decode %s: %w", rawURL, err)
+	}
+	return nil
+}
+
+// ─── featured categories ─────────────────────────────────────────────────────
+
+func (c *Client) fetchFeatured(ctx context.Context) (featuredCategoriesResp, error) {
+	rawURL := c.baseURL + "/featuredcategories/?cc=us&l=en"
+	var resp featuredCategoriesResp
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return featuredCategoriesResp{}, err
+	}
+	return resp, nil
+}
+
+// TopSellers returns the top-selling games on the store.
+func (c *Client) TopSellers(ctx context.Context, limit int) ([]Game, error) {
+	fc, err := c.fetchFeatured(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := fc.TopSellers.Items
+	if limit > 0 && limit < len(items) {
+		items = items[:limit]
+	}
+	out := make([]Game, len(items))
+	for i, item := range items {
+		out[i] = featuredItemToGame(item, i+1)
+	}
+	return out, nil
+}
+
+// NewReleases returns the newest released games on the store.
+func (c *Client) NewReleases(ctx context.Context, limit int) ([]Game, error) {
+	fc, err := c.fetchFeatured(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := fc.NewReleases.Items
+	if limit > 0 && limit < len(items) {
+		items = items[:limit]
+	}
+	out := make([]Game, len(items))
+	for i, item := range items {
+		out[i] = featuredItemToGame(item, i+1)
+	}
+	return out, nil
+}
+
+// Specials returns games currently on sale (discount_percent > 0).
+func (c *Client) Specials(ctx context.Context, limit int) ([]Game, error) {
+	fc, err := c.fetchFeatured(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Game
+	rank := 1
+	for _, item := range fc.Specials.Items {
+		if item.DiscountPercent <= 0 {
+			continue
+		}
+		out = append(out, featuredItemToGame(item, rank))
+		rank++
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// ─── search ──────────────────────────────────────────────────────────────────
+
+// Search searches the Steam store for query and returns up to limit results.
+func (c *Client) Search(ctx context.Context, query string, limit int) ([]Game, error) {
+	params := url.Values{}
+	params.Set("term", query)
+	params.Set("l", "en")
+	params.Set("cc", "us")
+	rawURL := c.baseURL + "/storesearch/?" + params.Encode()
+
+	var resp storeSearchResp
+	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+		return nil, err
+	}
+
+	items := resp.Items
+	if limit > 0 && limit < len(items) {
+		items = items[:limit]
+	}
+	out := make([]Game, len(items))
+	for i, item := range items {
+		out[i] = searchItemToGame(item, i+1)
+	}
+	return out, nil
+}
+
+// ─── game details ─────────────────────────────────────────────────────────────
+
+// GameDetails returns full details for a single app by appid.
+func (c *Client) GameDetails(ctx context.Context, appid int) (GameDetail, error) {
+	params := url.Values{}
+	params.Set("appids", strconv.Itoa(appid))
+	params.Set("cc", "us")
+	params.Set("l", "en")
+	rawURL := c.baseURL + "/appdetails/?" + params.Encode()
+
+	var outer appDetailsOuter
+	if err := c.getJSON(ctx, rawURL, &outer); err != nil {
+		return GameDetail{}, err
+	}
+
+	key := strconv.Itoa(appid)
+	entry, ok := outer[key]
+	if !ok || !entry.Success {
+		return GameDetail{}, ErrNotFound
+	}
+	return appDataToDetail(entry.Data), nil
+}
+
+// ─── reviews ─────────────────────────────────────────────────────────────────
+
+// Reviews returns user reviews for appid. It paginates until limit is reached.
+func (c *Client) Reviews(ctx context.Context, appid, limit int) ([]Review, error) {
+	cursor := "*"
+	var out []Review
+	for {
+		params := url.Values{}
+		params.Set("json", "1")
+		params.Set("filter", "all")
+		params.Set("language", "english")
+		params.Set("cursor", cursor)
+		params.Set("review_type", "all")
+		params.Set("purchase_type", "all")
+		params.Set("num_per_page", "20")
+		rawURL := fmt.Sprintf("%s/appreviews/%d?%s", c.storeRoot, appid, params.Encode())
+
+		var resp reviewsResp
+		if err := c.getJSON(ctx, rawURL, &resp); err != nil {
+			return out, err
+		}
+		if resp.Success != 1 {
+			return out, fmt.Errorf("reviews api returned success=%d", resp.Success)
+		}
+
+		for _, rw := range resp.Reviews {
+			out = append(out, reviewWireToReview(rw, len(out)+1))
+			if limit > 0 && len(out) >= limit {
+				return out, nil
+			}
+		}
+
+		if len(resp.Reviews) == 0 || resp.Cursor == "" || resp.Cursor == cursor {
+			break
+		}
+		cursor = resp.Cursor
+	}
+	return out, nil
+}
+
+// ─── ParseAppID ──────────────────────────────────────────────────────────────
+
+// ParseAppID parses a bare integer or a Steam store URL into an appid.
+// Accepted forms:
+//
+//	570
+//	https://store.steampowered.com/app/570/
+//	https://store.steampowered.com/app/570/Dota_2/
+func ParseAppID(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, errors.New("empty app id")
+	}
+	// Fast path: bare integer.
+	if id, err := strconv.Atoi(s); err == nil {
+		if id <= 0 {
+			return 0, fmt.Errorf("invalid app id %q", s)
+		}
+		return id, nil
+	}
+	// URL path: extract segment after /app/
+	const marker = "/app/"
+	idx := strings.Index(s, marker)
+	if idx < 0 {
+		return 0, fmt.Errorf("cannot parse app id from %q", s)
+	}
+	rest := s[idx+len(marker):]
+	// Take everything up to the next slash or end.
+	if slash := strings.Index(rest, "/"); slash >= 0 {
+		rest = rest[:slash]
+	}
+	id, err := strconv.Atoi(rest)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("cannot parse app id from %q", s)
+	}
+	return id, nil
 }
