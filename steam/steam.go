@@ -20,10 +20,7 @@ import (
 	"time"
 )
 
-const (
-	storeBase      = "https://store.steampowered.com"
-	defaultAPIBase = "https://store.steampowered.com/api"
-)
+const defaultAPIBase = "https://store.steampowered.com/api"
 
 // DefaultUserAgent identifies the client to Steam.
 const DefaultUserAgent = "steam/dev (+https://github.com/tamnd/steam-cli)"
