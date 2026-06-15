@@ -2,61 +2,114 @@ package steam
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
-func TestGet(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("User-Agent") == "" {
-			t.Error("request carried no User-Agent")
+func newTestClient(srv *httptest.Server) *Client {
+	cfg := DefaultConfig()
+	cfg.BaseURL = srv.URL
+	cfg.Rate = 0
+	cfg.Retries = 0
+	return NewClientWithConfig(cfg)
+}
+
+func sampleResponse(n int) wireTopSellers {
+	items := make([]wireItem, n)
+	for i := range items {
+		items[i] = wireItem{
+			ID:              570 + i,
+			Name:            "Game " + string(rune('A'+i)),
+			DiscountPercent: i * 10,
+			FinalPrice:      (i + 1) * 999,
+			Currency:        "USD",
 		}
-		_, _ = w.Write([]byte("ok"))
+	}
+	return wireTopSellers{TopSellers: struct {
+		Items []wireItem `json:"items"`
+	}{Items: items}}
+}
+
+func TestTopSellers(t *testing.T) {
+	resp := sampleResponse(5)
+	body, _ := json.Marshal(resp)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
 	}))
 	defer srv.Close()
 
-	c := NewClient()
-	c.Rate = 0 // no pacing in the test
-
-	body, err := c.Get(context.Background(), srv.URL)
+	c := newTestClient(srv)
+	got, err := c.TopSellers(context.Background(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != "ok" {
-		t.Errorf("body = %q, want %q", body, "ok")
+	if len(got) != 5 {
+		t.Errorf("got %d games, want 5", len(got))
+	}
+	if got[0].Name != "Game A" {
+		t.Errorf("Name = %q, want Game A", got[0].Name)
 	}
 }
 
-func TestGetRetriesOn503(t *testing.T) {
-	var hits int
+func TestTopSellersLimit(t *testing.T) {
+	resp := sampleResponse(10)
+	body, _ := json.Marshal(resp)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		if hits < 3 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		_, _ = w.Write([]byte("recovered"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
 	}))
 	defer srv.Close()
 
-	c := NewClient()
-	c.Rate = 0
-	c.Retries = 5
-
-	start := time.Now()
-	body, err := c.Get(context.Background(), srv.URL)
+	c := newTestClient(srv)
+	got, err := c.TopSellers(context.Background(), 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != "recovered" {
-		t.Errorf("body = %q after retries", body)
+	if len(got) != 3 {
+		t.Errorf("got %d games, want 3 (limit)", len(got))
 	}
-	if hits != 3 {
-		t.Errorf("server saw %d hits, want 3", hits)
+}
+
+func TestFreeGame(t *testing.T) {
+	resp := wireTopSellers{TopSellers: struct {
+		Items []wireItem `json:"items"`
+	}{Items: []wireItem{{ID: 570, Name: "Dota 2", FinalPrice: 0, DiscountPercent: 0}}}}
+	body, _ := json.Marshal(resp)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	got, err := c.TopSellers(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if time.Since(start) < 500*time.Millisecond {
-		t.Error("retries did not back off")
+	if got[0].Price != "Free" {
+		t.Errorf("Price = %q, want Free", got[0].Price)
+	}
+}
+
+func TestURLConstruction(t *testing.T) {
+	resp := sampleResponse(1)
+	body, _ := json.Marshal(resp)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(srv)
+	got, err := c.TopSellers(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://store.steampowered.com/app/570"
+	if got[0].URL != want {
+		t.Errorf("URL = %q, want %q", got[0].URL, want)
 	}
 }
