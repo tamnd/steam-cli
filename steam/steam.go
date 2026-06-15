@@ -22,6 +22,9 @@ import (
 
 const defaultAPIBase = "https://store.steampowered.com/api"
 
+// Host is the Steam store hostname, used by the kit domain driver.
+const Host = "store.steampowered.com"
+
 // DefaultUserAgent identifies the client to Steam.
 const DefaultUserAgent = "steam/dev (+https://github.com/tamnd/steam-cli)"
 
