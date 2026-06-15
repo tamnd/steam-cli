@@ -1,0 +1,10 @@
+title       = "steam"
+baseURL     = "https://steam-cli.tamnd.com/"
+description = "A command line for Steam."
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/steam-cli"
