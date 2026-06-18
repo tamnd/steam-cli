@@ -2,179 +2,149 @@ package steam
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/tamnd/any-cli/kit/errs"
 )
+
+// testClient returns a client with no pacing and the disk cache off, pointed at
+// base for all three hosts so a fixture server can stand in for every Steam host.
+func testClient(base string) *Client {
+	cfg := DefaultConfig()
+	cfg.Delay = 0
+	cfg.StoreURL = base
+	cfg.CommunityURL = base
+	cfg.APIURL = base
+	cfg.NoCache = true
+	return NewClient(cfg)
+}
 
 func TestGetSendsUserAgent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("User-Agent") == "" {
 			t.Error("request carried no User-Agent")
 		}
-		_, _ = w.Write([]byte(`"ok"`))
+		_, _ = w.Write([]byte("ok"))
 	}))
 	defer srv.Close()
 
-	cfg := DefaultConfig()
-	cfg.Rate = 0
-	c := NewClient(cfg)
-
-	body, err := c.get(context.Background(), srv.URL)
+	body, err := testClient(srv.URL).get(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != `"ok"` {
-		t.Errorf("body = %q", body)
+	if string(body) != "ok" {
+		t.Errorf("body = %q, want ok", body)
 	}
 }
 
-func TestGetRetriesOn503(t *testing.T) {
+func TestGetRetriesOn500(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
 		if hits < 3 {
-			w.WriteHeader(http.StatusServiceUnavailable)
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		_, _ = w.Write([]byte(`"recovered"`))
+		_, _ = w.Write([]byte("recovered"))
 	}))
 	defer srv.Close()
 
-	cfg := DefaultConfig()
-	cfg.Rate = 0
-	cfg.Retries = 5
-	c := NewClient(cfg)
+	c := testClient(srv.URL)
+	c.cfg.Retries = 5
 
+	start := time.Now()
 	body, err := c.get(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != `"recovered"` {
+	if string(body) != "recovered" {
 		t.Errorf("body = %q after retries", body)
 	}
 	if hits != 3 {
 		t.Errorf("server saw %d hits, want 3", hits)
 	}
+	if time.Since(start) < 500*time.Millisecond {
+		t.Error("retries did not back off")
+	}
 }
 
-func TestGetNullReturnsErrNotFound(t *testing.T) {
+// A 5xx that never recovers ends as ErrNetwork, so mapErr reports exit 8.
+func TestGetNetworkError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("null"))
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
-	cfg := DefaultConfig()
-	cfg.Rate = 0
-	c := NewClient(cfg)
+	c := testClient(srv.URL)
+	c.cfg.Retries = 1
 
-	var v any
-	err := c.getJSON(context.Background(), srv.URL, &v)
-	if err != ErrNotFound {
-		t.Fatalf("got %v, want ErrNotFound", err)
+	_, err := c.get(context.Background(), srv.URL)
+	if !errors.Is(err, ErrNetwork) {
+		t.Fatalf("err = %v, want ErrNetwork", err)
+	}
+	if code := errs.ExitCode(mapErr(err)); code != 8 {
+		t.Errorf("mapErr exit code = %d, want 8", code)
 	}
 }
 
-func TestFeaturedItemsToGames(t *testing.T) {
-	resp := featuredCategoriesResp{
-		TopSellers: featuredSection{
-			Items: []featuredItem{
-				{ID: 570, Name: "Dota 2", FinalPrice: 0, DiscountPercent: 0},
-				{ID: 620, Name: "Portal 2", FinalPrice: 999, DiscountPercent: 0},
-			},
-		},
-	}
-
-	items := resp.TopSellers.Items
-	games := make([]Game, len(items))
-	for i, item := range items {
-		games[i] = featuredItemToGame(item, i+1)
-	}
-
-	if len(games) != 2 {
-		t.Fatalf("got %d games, want 2", len(games))
-	}
-	if games[0].ID != 570 {
-		t.Errorf("games[0].ID = %d, want 570", games[0].ID)
-	}
-	if games[0].Price != "" {
-		t.Errorf("games[0].Price = %q, want empty (0 cents, not free)", games[0].Price)
-	}
-	if games[1].Price != "$9.99" {
-		t.Errorf("games[1].Price = %q, want $9.99", games[1].Price)
-	}
-	if games[1].URL != "https://store.steampowered.com/app/620/" {
-		t.Errorf("games[1].URL = %q", games[1].URL)
-	}
-}
-
-func TestStoreSearchDecoding(t *testing.T) {
-	body, _ := json.Marshal(storeSearchResp{
-		Total: 1,
-		Items: []storeSearchItem{
-			{
-				ID:   620,
-				Name: "Portal 2",
-				Price: struct {
-					Final           int    `json:"final"`
-					DiscountPercent int    `json:"discount_percent"`
-					Currency        string `json:"currency"`
-				}{Final: 999, DiscountPercent: 0, Currency: "USD"},
-			},
-		},
-	})
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(body)
-	}))
-	defer srv.Close()
-
-	cfg := DefaultConfig()
-	cfg.Rate = 0
-	c := NewClient(cfg)
-
-	var resp storeSearchResp
-	if err := c.getJSON(context.Background(), srv.URL, &resp); err != nil {
-		t.Fatal(err)
-	}
-	if len(resp.Items) != 1 {
-		t.Fatalf("got %d items, want 1", len(resp.Items))
-	}
-	g := searchItemToGame(resp.Items[0], 1)
-	if g.Price != "$9.99" {
-		t.Errorf("price = %q, want $9.99", g.Price)
-	}
-}
-
-func TestParseAppID(t *testing.T) {
+func TestWallAndExitCodes(t *testing.T) {
 	cases := []struct {
-		in      string
-		want    int
-		wantErr bool
+		name     string
+		handler  http.HandlerFunc
+		want     error
+		wantExit int
 	}{
-		{"570", 570, false},
-		{"620", 620, false},
-		{"https://store.steampowered.com/app/570/", 570, false},
-		{"https://store.steampowered.com/app/570/Dota_2/", 570, false},
-		{"not-a-number", 0, true},
-		{"", 0, true},
-		{"-5", 0, true},
+		{
+			"403 is the wall",
+			func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) },
+			ErrBlocked, 4,
+		},
+		{
+			"503 is the wall",
+			func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) },
+			ErrBlocked, 4,
+		},
+		{
+			"404 is not found",
+			func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) },
+			ErrNotFound, 6,
+		},
+		{
+			"cloudflare interstitial body is the wall",
+			func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`<html><head><title>Just a moment...</title></head><body><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></body></html>`))
+			},
+			ErrBlocked, 4,
+		},
+		{
+			"clean body passes",
+			func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) },
+			nil, 0,
+		},
 	}
 	for _, tc := range cases {
-		got, err := ParseAppID(tc.in)
-		if tc.wantErr {
-			if err == nil {
-				t.Errorf("ParseAppID(%q): want error, got %d", tc.in, got)
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.handler)
+			defer srv.Close()
+			c := testClient(srv.URL)
+			c.cfg.Retries = 0
+			_, err := c.get(context.Background(), srv.URL)
+			if tc.want == nil {
+				if err != nil {
+					t.Fatalf("err = %v, want nil", err)
+				}
+				return
 			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("ParseAppID(%q): unexpected error: %v", tc.in, err)
-			continue
-		}
-		if got != tc.want {
-			t.Errorf("ParseAppID(%q) = %d, want %d", tc.in, got, tc.want)
-		}
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if code := errs.ExitCode(mapErr(err)); code != tc.wantExit {
+				t.Errorf("exit code = %d, want %d", code, tc.wantExit)
+			}
+		})
 	}
 }

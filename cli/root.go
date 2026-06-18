@@ -1,153 +1,93 @@
-// Package cli builds the steam command tree on top of the steam library.
+// Package cli assembles the st command tree from the steam domain on top of the
+// any-cli/kit framework.
 package cli
 
 import (
-	"fmt"
-	"os"
+	"strconv"
 
-	"github.com/mattn/go-isatty"
-	"github.com/spf13/cobra"
+	"github.com/tamnd/any-cli/kit"
 	"github.com/tamnd/steam-cli/steam"
 )
 
-// Build metadata, injected via -ldflags at release time.
+// Build metadata, set via -ldflags at release time.
 var (
 	Version = "dev"
 	Commit  = "none"
 	Date    = "unknown"
 )
 
-// exit codes.
-const (
-	exitError  = 1
-	exitUsage  = 2
-	exitNoData = 3
-)
-
-// ExitError carries a process exit code up to main.
-type ExitError struct {
-	Code int
-	Err  error
+// builder holds the domain-global flags while the app is assembled, then folds
+// them onto the resolved config in finalize, using the exact keys ClientFromConfig
+// reads. There is no token or key flag: st reads only keyless Steam surfaces.
+type builder struct {
+	userAgent      string
+	cc             string
+	lang           string
+	currency       int
+	reviewFilter   string
+	reviewLanguage string
+	purchaseType   string
+	cacheTTL       string
+	refresh        bool
 }
 
-func (e *ExitError) Error() string {
-	if e.Err != nil {
-		return e.Err.Error()
+// NewApp assembles the kit application from the steam domain. The domain's
+// Register installs the client factory and every operation, so the binary and a
+// host (which blank-imports the package) share one source of truth. This package
+// adds the domain-global flags and the version command; kit.Run turns the App into
+// the CLI, plus the serve and mcp surfaces and the typed-error-to-exit-code
+// mapping.
+//
+// To add a command, declare it in steam/domain.go with kit.Handle and it appears
+// here automatically. Reach for app.AddCommand only for a verb that does not fit
+// the emit-records shape, the way version does below.
+func NewApp() *kit.App {
+	b := &builder{}
+	id := steam.Identity()
+	id.Version = Version
+
+	app := kit.New(id, kit.WithDefaults(steam.Defaults))
+	app.GlobalFlags(b.globals)
+	app.Finalize(b.finalize)
+
+	steam.Domain{}.Register(app)
+	app.AddCommand(newVersionCmd())
+	return app
+}
+
+func (b *builder) globals(f *kit.FlagSet) {
+	def := steam.DefaultConfig()
+	f.StringVar(&b.userAgent, "user-agent", steam.DefaultUserAgent, "User-Agent sent with each request")
+	f.StringVar(&b.cc, "cc", def.CC, "storefront country code, e.g. us; sets price currency and availability")
+	f.StringVar(&b.lang, "lang", def.Lang, "storefront language, e.g. english; sets description and name language")
+	f.IntVar(&b.currency, "currency", def.Currency, "market currency code, e.g. 1 for USD")
+	f.StringVar(&b.reviewFilter, "review-filter", def.ReviewFilter, "review order: recent, updated, or all")
+	f.StringVar(&b.reviewLanguage, "review-language", def.ReviewLanguage, "review language: all, english, ...")
+	f.StringVar(&b.purchaseType, "purchase-type", def.PurchaseType, "review purchase type: all, steam, or non_steam_purchase")
+	f.StringVar(&b.cacheTTL, "cache-ttl", steam.DefaultCacheTTL.String(), "how long a cached response stays fresh")
+	f.BoolVar(&b.refresh, "refresh", false, "fetch fresh copies and rewrite the cache, ignoring any hit")
+}
+
+func (b *builder) finalize(c *kit.Config) {
+	if c.Extra == nil {
+		c.Extra = map[string]string{}
 	}
-	return fmt.Sprintf("exit %d", e.Code)
-}
-
-func (e *ExitError) Unwrap() error { return e.Err }
-
-func codeError(code int, err error) error { return &ExitError{Code: code, Err: err} }
-
-// App holds shared state threaded through every command.
-type App struct {
-	client *steam.Client
-	cfg    steam.Config
-
-	output   string
-	fields   []string
-	noHeader bool
-	template string
-	limit    int
-	quiet    bool
-}
-
-// Root builds the root command and its subtree.
-func Root() *cobra.Command {
-	app := &App{cfg: steam.DefaultConfig()}
-
-	root := &cobra.Command{
-		Use:   "steam",
-		Short: "Browse the Steam game store",
-		Long: `steam reads the Steam game store through its public API.
-No API key is required. It returns records as table, JSON, JSONL,
-CSV, TSV, or URLs.
-
-steam is an independent tool and is not affiliated with Valve Corporation.`,
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			return app.setup()
-		},
-	}
-
-	pf := root.PersistentFlags()
-	pf.StringVarP(&app.output, "output", "o", "auto", "output: table|json|jsonl|csv|tsv|url (auto=table on TTY, jsonl piped)")
-	pf.StringSliceVar(&app.fields, "fields", nil, "comma-separated columns to include")
-	pf.BoolVar(&app.noHeader, "no-header", false, "omit the header row in table/csv/tsv")
-	pf.StringVar(&app.template, "template", "", "Go text/template applied per record")
-	pf.IntVarP(&app.limit, "limit", "n", 0, "limit number of records (0 = command default)")
-	pf.BoolVarP(&app.quiet, "quiet", "q", false, "suppress progress on stderr")
-
-	pf.DurationVar(&app.cfg.Rate, "delay", app.cfg.Rate, "minimum spacing between requests")
-	pf.DurationVar(&app.cfg.Timeout, "timeout", app.cfg.Timeout, "per-request timeout")
-	pf.IntVar(&app.cfg.Retries, "retries", app.cfg.Retries, "retry attempts on 429/5xx")
-	pf.StringVar(&app.cfg.UserAgent, "user-agent", app.cfg.UserAgent, "User-Agent sent with each request")
-
-	root.AddCommand(
-		app.topSellersCmd(),
-		app.newReleasesCmd(),
-		app.specialsCmd(),
-		app.searchCmd(),
-		app.gameCmd(),
-		app.reviewsCmd(),
-		newVersionCmd(),
-	)
-	return root
-}
-
-func (a *App) setup() error {
-	if a.output == "" || a.output == "auto" {
-		if isatty.IsTerminal(os.Stdout.Fd()) {
-			a.output = string(FormatTable)
-		} else {
-			a.output = string(FormatJSONL)
+	set := func(k, v string) {
+		if v != "" {
+			c.Extra[k] = v
 		}
 	}
-	if !Format(a.output).Valid() {
-		return codeError(exitUsage, fmt.Errorf("unknown output format %q", a.output))
+	set("user-agent", b.userAgent)
+	set("cc", b.cc)
+	set("lang", b.lang)
+	if b.currency != 0 {
+		c.Extra["currency"] = strconv.Itoa(b.currency)
 	}
-	a.client = steam.NewClient(a.cfg)
-	return nil
-}
-
-func (a *App) render(records any) error {
-	r := NewRenderer(os.Stdout, Format(a.output), a.fields, a.noHeader, a.template)
-	return r.Render(records)
-}
-
-func (a *App) renderOrEmpty(records any, n int) error {
-	if err := a.render(records); err != nil {
-		return err
+	set("review-filter", b.reviewFilter)
+	set("review-language", b.reviewLanguage)
+	set("purchase-type", b.purchaseType)
+	set("cache-ttl", b.cacheTTL)
+	if b.refresh {
+		c.Extra["refresh"] = "true"
 	}
-	if n == 0 {
-		return codeError(exitNoData, nil)
-	}
-	return nil
-}
-
-func (a *App) progressf(format string, args ...any) {
-	if a.quiet {
-		return
-	}
-	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
-}
-
-func mapFetchErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if isNotFound(err) {
-		return codeError(exitNoData, err)
-	}
-	return codeError(exitError, err)
-}
-
-func (a *App) effectiveLimit(def int) int {
-	if a.limit > 0 {
-		return a.limit
-	}
-	return def
 }
