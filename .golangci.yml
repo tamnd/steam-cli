@@ -12,6 +12,11 @@ linters:
   enable:
     - misspell
     - unconvert
+  settings:
+    misspell:
+      # packageid is the Steam field name for a package id, not a typo.
+      ignore-rules:
+        - packageid
 
 formatters:
   enable:

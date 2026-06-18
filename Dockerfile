@@ -12,10 +12,10 @@ ARG TARGETPLATFORM
 
 # ca-certificates for HTTPS; tzdata for sane timestamps.
 RUN apk add --no-cache ca-certificates tzdata \
- && adduser -D -H -u 10001 steam
+ && adduser -D -H -u 10001 st
 
-COPY $TARGETPLATFORM/steam /usr/bin/steam
+COPY $TARGETPLATFORM/st /usr/bin/st
 
-USER steam
+USER st
 
-ENTRYPOINT ["/usr/bin/steam"]
+ENTRYPOINT ["/usr/bin/st"]
