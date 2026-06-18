@@ -17,12 +17,12 @@ By default you get an aligned table. Ask for JSON when you want to pipe it:
 $ st app 620 -o json
 [
   {
-    "appid": 620,
+    "id": "620",
     "name": "Portal 2",
-    "url": "https://store.steampowered.com/app/620",
     "type": "game",
     "developers": ["Valve"],
     "publishers": ["Valve"],
+    "url": "https://store.steampowered.com/app/620",
     ...
   }
 ]
@@ -37,9 +37,9 @@ list.
 The same flags work on every command:
 
 ```bash
-st app 620 --fields appid,name,url    # keep only these columns
-st app 620 --template '{{.Name}}'     # just the name
-st search portal -o jsonl | jq .appid # one object per line, into jq
+st app 620 --fields id,name,url       # keep only these columns
+st app 620 --template '{{.name}}'     # just the name
+st search portal -o jsonl | jq .id    # one object per line, into jq
 ```
 
 `-o` takes `table`, `markdown`, `json`, `jsonl`, `csv`, `tsv`, `url`, or `raw`.

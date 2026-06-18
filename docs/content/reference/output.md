@@ -45,7 +45,7 @@ terminal, so a pipe always gets plain, parseable bytes. Force the choice with
 Keep only the fields you want:
 
 ```bash
-st app 620 --fields appid,name,url
+st app 620 --fields id,name,url
 ```
 
 `--no-header` drops the header row in `table` and `csv` output, which helps when a
@@ -54,10 +54,10 @@ downstream tool expects bare rows.
 ## Templating rows
 
 For full control over each line, apply a Go text/template. Fields are the JSON
-keys, capitalized:
+keys exactly as they appear in `-o json`, so they are lowercase and snake_case:
 
 ```bash
-st search portal --template '{{.AppID}} {{.Name}}'
+st search portal --template '{{.id}} {{.name}}'
 ```
 
 ## Why auto-detection helps
