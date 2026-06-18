@@ -1,7 +1,7 @@
 ---
 title: "Release notes"
 linkTitle: "Release notes"
-description: "What changed in each steam release, newest first."
+description: "What changed in each st release, newest first."
 weight: 40
 ---
 

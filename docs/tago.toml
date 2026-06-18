@@ -1,6 +1,6 @@
-title       = "steam"
+title       = "st"
 baseURL     = "https://steam-cli.tamnd.com/"
-description = "Browse the Steam game store"
+description = "A command line for Steam."
 contentDir  = "content"
 outputDir   = "public"
 theme       = "tago-doks"

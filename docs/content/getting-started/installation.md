@@ -1,6 +1,6 @@
 ---
 title: "Installation"
-description: "Install steam from a release, with go install, or from source."
+description: "Install st from a release, with go install, or from source."
 weight: 20
 ---
 
@@ -8,17 +8,17 @@ weight: 20
 
 Every [release](https://github.com/tamnd/steam-cli/releases) carries archives for Linux, macOS,
 and Windows on amd64 and arm64, plus deb, rpm, and apk packages for Linux.
-Download, unpack, put `steam` on your `PATH`, done. The `checksums.txt`
+Download, unpack, put `st` on your `PATH`, done. The `checksums.txt`
 on each release is signed with keyless [cosign](https://docs.sigstore.dev/) if
 you want to verify before running.
 
 ## With Go
 
 ```bash
-go install github.com/tamnd/steam-cli/cmd/steam@latest
+go install github.com/tamnd/steam-cli/cmd/st@latest
 ```
 
-That puts `steam` in `$(go env GOPATH)/bin`, which is `~/go/bin` unless
+That puts `st` in `$(go env GOPATH)/bin`, which is `~/go/bin` unless
 you moved it. Make sure that directory is on your `PATH`.
 
 ## From source
@@ -26,20 +26,20 @@ you moved it. Make sure that directory is on your `PATH`.
 ```bash
 git clone https://github.com/tamnd/steam-cli
 cd steam-cli
-make build        # produces ./bin/steam
-./bin/steam version
+make build        # produces ./bin/st
+./bin/st version
 ```
 
 ## Container image
 
 ```bash
-docker run --rm ghcr.io/tamnd/steam:latest --help
+docker run --rm ghcr.io/tamnd/st:latest --help
 ```
 
 ## Checking the install
 
 ```bash
-steam version
+st version
 ```
 
 prints the version and exits.
