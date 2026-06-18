@@ -69,7 +69,12 @@ st players 620                        # the live concurrent player count
 st achievements 620                   # global achievement unlock rates
 st package 7877                       # a package (sub) with the apps it bundles
 st featured                           # the featured store categories' apps
+st top-sellers                        # the current top-selling apps
+st specials                           # the apps currently on sale
 ```
+
+`featured` flattens every promoted category; `top-sellers`, `new-releases`,
+`specials`, and `coming-soon` are the named slices of the same endpoint.
 
 ## Profiles and the market
 

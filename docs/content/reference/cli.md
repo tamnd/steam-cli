@@ -20,6 +20,10 @@ map.
 | `reviews <ref>` | List an app's user reviews (cursor-paged) |
 | `package <id>` | Show one store package (a sub) with the apps it bundles |
 | `featured` | List the featured store categories' apps |
+| `top-sellers` | List the current top-selling apps |
+| `new-releases` | List the new-release apps |
+| `specials` | List the apps currently on sale |
+| `coming-soon` | List the upcoming apps |
 | `news <ref>` | List an app's news and announcements |
 | `players <ref>` | Show an app's live concurrent player count |
 | `achievements <ref>` | List an app's global achievement unlock rates |

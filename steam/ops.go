@@ -85,6 +85,19 @@ func featured(ctx context.Context, in featuredIn, emit func(*App) error) error {
 	return emitAll(items, emit)
 }
 
+// featuredSlice handles the named featured categories (top-sellers, new-releases,
+// specials, coming-soon), each one a single key of the featuredcategories
+// endpoint.
+func featuredSlice(key string) func(context.Context, featuredIn, func(*App) error) error {
+	return func(ctx context.Context, in featuredIn, emit func(*App) error) error {
+		items, err := in.Client.FeaturedCategory(ctx, key, limitOr(in.Limit, defaultLimit))
+		if err != nil {
+			return mapErr(err)
+		}
+		return emitAll(items, emit)
+	}
+}
+
 type newsIn struct {
 	Ref    string  `kit:"arg" help:"an appid or a store URL"`
 	Limit  int     `kit:"flag,inherit"`

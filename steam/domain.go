@@ -105,6 +105,30 @@ func (Domain) Register(app *kit.App) {
 	}, featured)
 
 	kit.Handle(app, kit.OpMeta{
+		Name: "top-sellers", Group: "store", List: true,
+		Summary: "List the current top-selling apps",
+		URIType: "featured",
+	}, featuredSlice("top_sellers"))
+
+	kit.Handle(app, kit.OpMeta{
+		Name: "new-releases", Group: "store", List: true,
+		Summary: "List the new-release apps",
+		URIType: "featured",
+	}, featuredSlice("new_releases"))
+
+	kit.Handle(app, kit.OpMeta{
+		Name: "specials", Group: "store", List: true,
+		Summary: "List the apps currently on sale",
+		URIType: "featured",
+	}, featuredSlice("specials"))
+
+	kit.Handle(app, kit.OpMeta{
+		Name: "coming-soon", Group: "store", List: true,
+		Summary: "List the upcoming apps",
+		URIType: "featured",
+	}, featuredSlice("coming_soon"))
+
+	kit.Handle(app, kit.OpMeta{
 		Name: "news", Group: "store", List: true,
 		Summary: "List an app's news and announcements",
 		URIType: "news",

@@ -32,11 +32,11 @@ type featuredItem struct {
 	LinuxAvailable   bool   `json:"linux_available"`
 }
 
-// Featured returns up to limit promoted apps, de-duplicated by appid.
+// Featured returns up to limit promoted apps, de-duplicated by appid, across every
+// featured category the endpoint carries.
 func (c *Client) Featured(ctx context.Context, limit int) ([]*App, error) {
-	u := fmt.Sprintf("%s/api/featuredcategories/?cc=%s&l=%s", c.cfg.StoreURL, c.cfg.CC, c.cfg.Lang)
-	var raw map[string]json.RawMessage
-	if err := c.getJSON(ctx, u, &raw); err != nil {
+	raw, err := c.featuredCategories(ctx)
+	if err != nil {
 		return nil, err
 	}
 	var out []*App
@@ -63,6 +63,45 @@ func (c *Client) Featured(ctx context.Context, limit int) ([]*App, error) {
 		}
 	}
 	return out, nil
+}
+
+// FeaturedCategory returns up to limit apps from one named category of the
+// featuredcategories endpoint: top_sellers, new_releases, specials, or
+// coming_soon. A missing category yields no apps and no error.
+func (c *Client) FeaturedCategory(ctx context.Context, key string, limit int) ([]*App, error) {
+	raw, err := c.featuredCategories(ctx)
+	if err != nil {
+		return nil, err
+	}
+	v, ok := raw[key]
+	if !ok {
+		return nil, nil
+	}
+	var cat featuredCategory
+	if err := json.Unmarshal(v, &cat); err != nil {
+		return nil, nil
+	}
+	var out []*App
+	for i := range cat.Items {
+		it := &cat.Items[i]
+		if it.ID == 0 {
+			continue
+		}
+		out = append(out, featuredItemToApp(it))
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (c *Client) featuredCategories(ctx context.Context) (map[string]json.RawMessage, error) {
+	u := fmt.Sprintf("%s/api/featuredcategories/?cc=%s&l=%s", c.cfg.StoreURL, c.cfg.CC, c.cfg.Lang)
+	var raw map[string]json.RawMessage
+	if err := c.getJSON(ctx, u, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func featuredItemToApp(it *featuredItem) *App {

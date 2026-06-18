@@ -293,6 +293,34 @@ func TestFeaturedParse(t *testing.T) {
 	}
 }
 
+func TestFeaturedCategoryParse(t *testing.T) {
+	// A named slice returns only its own category, with no cross-category dedup.
+	const fixture = `{
+		"status":1,
+		"specials":{"items":[{"id":620,"name":"Portal 2"}]},
+		"top_sellers":{"items":[{"id":620,"name":"Portal 2"},{"id":400,"name":"Portal"}]}
+	}`
+	srv := routerServer(t, map[string]string{"/api/featuredcategories": fixture})
+	defer srv.Close()
+
+	c := testClient(srv.URL)
+	top, err := c.FeaturedCategory(context.Background(), "top_sellers", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 2 || top[0].ID != "620" || top[1].ID != "400" {
+		t.Errorf("top_sellers = %v, want [620 400] in order", top)
+	}
+
+	none, err := c.FeaturedCategory(context.Background(), "coming_soon", 0)
+	if err != nil {
+		t.Fatalf("missing category should not error: %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("missing category = %v, want empty", none)
+	}
+}
+
 const profileFixture = `<?xml version="1.0" encoding="UTF-8"?>
 <profile>
 	<steamID64>76561197960287930</steamID64>

@@ -51,6 +51,10 @@ st search portal                     # search the store for apps
 st reviews 620 -n 50                 # an app's user reviews (cursor-paged)
 st package 7877                      # a package (sub) with the apps it bundles
 st featured                          # the featured store categories' apps
+st top-sellers                       # the current top-selling apps
+st new-releases                      # the new-release apps
+st specials                          # the apps currently on sale
+st coming-soon                       # the upcoming apps
 st news 620                          # an app's news and announcements
 st players 620                       # the live concurrent player count
 st achievements 620                  # global achievement unlock rates
