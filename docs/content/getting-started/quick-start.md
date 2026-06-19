@@ -58,6 +58,21 @@ st search portal -n 5 -o url          # the first five, as URLs
 st search portal -o url | head -3 | sed 's#.*/app/##' | xargs -n1 st app
 ```
 
+## Browse and crawl the catalog
+
+`search` answers a query; `browse` enumerates the whole catalog. It pages the
+same list the store scrolls (around 260,000 apps), so it is the seed for a bulk
+walk or export. `crawl` then follows the typed edges a record carries: an app to
+its DLC, demos, base game, and packages, a package to the apps it bundles, a
+profile to its most-played apps.
+
+```bash
+st browse --sort Released_DESC -n 20  # the 20 newest apps
+st browse --maxprice free -n 50       # the first 50 free apps
+st crawl 620 --depth 2                # the graph two hops out from Portal 2
+st crawl gabelogannewell --depth 1    # a profile's most-played apps
+```
+
 ## Walk one app's graph
 
 Everything below addresses the same appid, so an app and its data line up:

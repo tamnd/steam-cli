@@ -17,6 +17,8 @@ map.
 |---|---|
 | `app <ref>` | Show one store app in full (details, then the store-page island) |
 | `search <query>` | Search the store for apps |
+| `browse` | Page through the whole store catalog (the discovery seed) |
+| `crawl <ref>` | Walk the public graph breadth-first from a seed app, package, or profile |
 | `reviews <ref>` | List an app's user reviews (cursor-paged) |
 | `package <id>` | Show one store package (a sub) with the apps it bundles |
 | `featured` | List the featured store categories' apps |
@@ -29,6 +31,33 @@ map.
 | `achievements <ref>` | List an app's global achievement unlock rates |
 
 A `<ref>` is an appid, a store URL, or anything `st ref id` can classify.
+
+### Discovery: browse and crawl
+
+`browse` reads the same paginated catalog the store page calls as it scrolls. It
+reports a total of around 260,000 apps and returns them in pages, so it is the
+seed a walk or a bulk export starts from. Each row is a full app reference, so a
+hit pipes straight into `st app`, `st reviews`, or `st crawl`.
+
+| Flag | Meaning |
+|---|---|
+| `--query` | A free-text term, omitted for the whole catalog |
+| `--sort` | Sort order: `Released_DESC`, `Reviews_DESC`, `Price_ASC`, `Name_ASC` |
+| `--maxprice` | Price ceiling: `free`, `5`, `10`, and so on |
+| `--start` | The first result offset, for resuming a walk |
+| `-n, --limit` | How many apps to return in total |
+
+`crawl` follows the typed edges the records already carry. From an app it reaches
+the DLC, demos, base game, and packages; from a package it reaches the apps it
+bundles; from a profile it reaches the most-played apps. It emits one node per
+visited record, never revisits a node, and is best-effort past the seed, so an
+unreachable node is skipped rather than fatal. Each node carries its `kind:id`
+edges, so the output is a graph ready to load elsewhere.
+
+| Flag | Meaning |
+|---|---|
+| `--depth` | How far from the seed to walk (default `2`, `0` visits only the seed) |
+| `-n, --limit` | The total number of nodes to emit |
 
 ## Player commands
 
