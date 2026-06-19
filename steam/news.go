@@ -26,6 +26,7 @@ type newsItemWire struct {
 	FeedLabel     string `json:"feedlabel"`
 	Date          int64  `json:"date"`
 	FeedName      string `json:"feedname"`
+	FeedType      int    `json:"feed_type"`
 }
 
 // News returns up to limit news items for appid.
@@ -64,6 +65,7 @@ func newsToRecord(n *newsItemWire, appid string) *NewsItem {
 		Body:      n.Contents,
 		FeedLabel: n.FeedLabel,
 		FeedName:  n.FeedName,
+		FeedType:  n.FeedType,
 		External:  n.IsExternalURL,
 		Date:      unixToRFC(n.Date),
 	}

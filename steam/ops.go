@@ -98,6 +98,40 @@ func featuredSlice(key string) func(context.Context, featuredIn, func(*App) erro
 	}
 }
 
+type browseIn struct {
+	Query    string  `kit:"flag,name=query" help:"a free-text term, omitted for the whole catalog"`
+	Sort     string  `kit:"flag,name=sort" help:"sort order: Released_DESC, Reviews_DESC, Price_ASC, Name_ASC"`
+	MaxPrice string  `kit:"flag,name=maxprice" help:"price ceiling: free, 5, 10, ..."`
+	Start    int     `kit:"flag,name=start" help:"the first result offset"`
+	Limit    int     `kit:"flag,inherit"`
+	Client   *Client `kit:"inject"`
+}
+
+func browse(ctx context.Context, in browseIn, emit func(*App) error) error {
+	items, err := in.Client.Browse(ctx, BrowseOpts{
+		Query:    in.Query,
+		Sort:     in.Sort,
+		MaxPrice: in.MaxPrice,
+		Start:    in.Start,
+		Limit:    limitOr(in.Limit, defaultLimit),
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	return emitAll(items, emit)
+}
+
+type crawlIn struct {
+	Ref    string  `kit:"arg" help:"a seed app, package, or profile (an id or a URL)"`
+	Depth  int     `kit:"flag,name=depth" help:"how far from the seed to walk" default:"2"`
+	Limit  int     `kit:"flag,inherit"`
+	Client *Client `kit:"inject"`
+}
+
+func crawl(ctx context.Context, in crawlIn, emit func(*CrawlNode) error) error {
+	return in.Client.Crawl(ctx, in.Ref, in.Depth, limitOr(in.Limit, defaultLimit), emit)
+}
+
 type newsIn struct {
 	Ref    string  `kit:"arg" help:"an appid or a store URL"`
 	Limit  int     `kit:"flag,inherit"`

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -24,35 +25,47 @@ type appDetailsEnvelope map[string]struct {
 }
 
 type appData struct {
-	Type                string          `json:"type"`
-	Name                string          `json:"name"`
-	SteamAppID          int             `json:"steam_appid"`
-	RequiredAge         flexInt         `json:"required_age"`
-	IsFree              bool            `json:"is_free"`
-	DLC                 []int           `json:"dlc"`
-	DetailedDescription string          `json:"detailed_description"`
-	AboutTheGame        string          `json:"about_the_game"`
-	ShortDescription    string          `json:"short_description"`
-	SupportedLanguages  string          `json:"supported_languages"`
-	HeaderImage         string          `json:"header_image"`
-	Background          string          `json:"background"`
-	Website             string          `json:"website"`
-	Developers          []string        `json:"developers"`
-	Publishers          []string        `json:"publishers"`
-	ControllerSupport   string          `json:"controller_support"`
-	PriceOverview       *priceOverview  `json:"price_overview"`
-	Packages            []int           `json:"packages"`
-	Platforms           *platformsWire  `json:"platforms"`
-	Metacritic          *metacriticWire `json:"metacritic"`
-	Categories          []idNameWire    `json:"categories"`
-	Genres              []idNameWire    `json:"genres"`
-	Screenshots         []screenshot    `json:"screenshots"`
-	Movies              []movie         `json:"movies"`
+	Type                string                     `json:"type"`
+	Name                string                     `json:"name"`
+	SteamAppID          int                        `json:"steam_appid"`
+	RequiredAge         flexInt                    `json:"required_age"`
+	IsFree              bool                       `json:"is_free"`
+	DLC                 []int                      `json:"dlc"`
+	DetailedDescription string                     `json:"detailed_description"`
+	AboutTheGame        string                     `json:"about_the_game"`
+	ShortDescription    string                     `json:"short_description"`
+	SupportedLanguages  string                     `json:"supported_languages"`
+	HeaderImage         string                     `json:"header_image"`
+	CapsuleImage        string                     `json:"capsule_image"`
+	CapsuleImageV5      string                     `json:"capsule_imagev5"`
+	Background          string                     `json:"background"`
+	BackgroundRaw       string                     `json:"background_raw"`
+	Website             string                     `json:"website"`
+	LegalNotice         string                     `json:"legal_notice"`
+	DRMNotice           string                     `json:"drm_notice"`
+	ExtUserAccount      string                     `json:"ext_user_account_notice"`
+	Developers          []string                   `json:"developers"`
+	Publishers          []string                   `json:"publishers"`
+	ControllerSupport   string                     `json:"controller_support"`
+	PriceOverview       *priceOverview             `json:"price_overview"`
+	Packages            []int                      `json:"packages"`
+	PackageGroups       []packageGroup             `json:"package_groups"`
+	Platforms           *platformsWire             `json:"platforms"`
+	Metacritic          *metacriticWire            `json:"metacritic"`
+	Categories          []idNameWire               `json:"categories"`
+	Genres              []idNameWire               `json:"genres"`
+	Screenshots         []screenshot               `json:"screenshots"`
+	Movies              []movie                    `json:"movies"`
+	PCRequirements      json.RawMessage            `json:"pc_requirements"`
+	MacRequirements     json.RawMessage            `json:"mac_requirements"`
+	LinuxRequirements   json.RawMessage            `json:"linux_requirements"`
+	Ratings             map[string]json.RawMessage `json:"ratings"`
 	Recommendations     *struct {
 		Total int `json:"total"`
 	} `json:"recommendations"`
 	Achievements *struct {
-		Total int `json:"total"`
+		Total       int             `json:"total"`
+		Highlighted []achievementHL `json:"highlighted"`
 	} `json:"achievements"`
 	ReleaseDate *struct {
 		ComingSoon bool   `json:"coming_soon"`
@@ -69,14 +82,47 @@ type appData struct {
 		AppID string `json:"appid"`
 		Name  string `json:"name"`
 	} `json:"fullgame"`
+	Demos []struct {
+		AppID       flexString `json:"appid"`
+		Description string     `json:"description"`
+	} `json:"demos"`
 }
 
 type priceOverview struct {
-	Currency        string `json:"currency"`
-	Initial         int    `json:"initial"`
-	Final           int    `json:"final"`
-	DiscountPercent int    `json:"discount_percent"`
-	FinalFormatted  string `json:"final_formatted"`
+	Currency         string `json:"currency"`
+	Initial          int    `json:"initial"`
+	Final            int    `json:"final"`
+	DiscountPercent  int    `json:"discount_percent"`
+	InitialFormatted string `json:"initial_formatted"`
+	FinalFormatted   string `json:"final_formatted"`
+}
+
+// packageGroup is one buy-options block; each sub is a purchasable package.
+type packageGroup struct {
+	Subs []struct {
+		PackageID                int    `json:"packageid"`
+		OptionText               string `json:"option_text"`
+		PercentSavings           int    `json:"percent_savings"`
+		IsFreeLicense            bool   `json:"is_free_license"`
+		PriceInCentsWithDiscount int    `json:"price_in_cents_with_discount"`
+	} `json:"subs"`
+}
+
+// achievementHL is one highlighted achievement, carrying its localized name and a
+// full icon URL the percentages endpoint cannot give.
+type achievementHL struct {
+	Name          string `json:"name"`
+	LocalizedName string `json:"localized_name"`
+	Path          string `json:"path"`
+}
+
+// ratingWire is one content-rating board's fields. Steam quotes every value.
+type ratingWire struct {
+	Rating      string `json:"rating"`
+	RequiredAge string `json:"required_age"`
+	Descriptors string `json:"descriptors"`
+	Banned      string `json:"banned"`
+	UseAgeGate  string `json:"use_age_gate"`
 }
 
 type platformsWire struct {
@@ -112,8 +158,22 @@ type movie struct {
 }
 
 // App fetches one app by appid and returns it as a record. It reads the appdetails
-// JSON, then enriches with the store-page island when the page is reachable.
+// JSON, then enriches with the store-page island and the review summary when those
+// surfaces are reachable.
 func (c *Client) App(ctx context.Context, appid string) (*App, error) {
+	app, err := c.appCore(ctx, appid)
+	if err != nil {
+		return nil, err
+	}
+	c.enrichApp(ctx, app)
+	c.enrichReviewSummary(ctx, app)
+	return app, nil
+}
+
+// appCore reads only the appdetails JSON and maps it onto an App with its edges,
+// skipping the store-page and review-summary enrichment. A breadth-first walk uses
+// it to follow an app's edges without paying for the extra fetches.
+func (c *Client) appCore(ctx context.Context, appid string) (*App, error) {
 	appid = strings.TrimSpace(appid)
 	if !numRE.MatchString(appid) {
 		if r := Classify(appid); r.Kind == "app" {
@@ -136,9 +196,32 @@ func (c *Client) App(ctx context.Context, appid string) (*App, error) {
 	if err := json.Unmarshal(entry.Data, &d); err != nil {
 		return nil, fmt.Errorf("decode appdetails data: %w", err)
 	}
-	app := toApp(&d, appid)
-	c.enrichApp(ctx, app)
-	return app, nil
+	return toApp(&d, appid), nil
+}
+
+// enrichReviewSummary folds the appreviews query_summary (Steam's canonical
+// review score and the positive/negative totals) into app, best-effort. It asks
+// for zero reviews, so it is a cheap summary-only read.
+func (c *Client) enrichReviewSummary(ctx context.Context, app *App) {
+	u := fmt.Sprintf("%s/appreviews/%s?json=1&num_per_page=0&language=all&purchase_type=all",
+		c.cfg.StoreURL, app.ID)
+	var resp struct {
+		Success      int `json:"success"`
+		QuerySummary struct {
+			ReviewScoreDesc string `json:"review_score_desc"`
+			TotalPositive   int    `json:"total_positive"`
+			TotalNegative   int    `json:"total_negative"`
+			TotalReviews    int    `json:"total_reviews"`
+		} `json:"query_summary"`
+	}
+	if err := c.getJSON(ctx, u, &resp); err != nil || resp.Success != 1 {
+		return
+	}
+	q := resp.QuerySummary
+	app.ReviewScoreDesc = q.ReviewScoreDesc
+	app.TotalPositive = q.TotalPositive
+	app.TotalNegative = q.TotalNegative
+	app.TotalReviews = q.TotalReviews
 }
 
 // toApp maps the appdetails data onto an App and wires its edges.
@@ -158,18 +241,29 @@ func toApp(d *appData, appid string) *App {
 		ControllerSupport:   d.ControllerSupport,
 		Website:             d.Website,
 		HeaderImage:         d.HeaderImage,
+		CapsuleImage:        d.CapsuleImage,
+		CapsuleImageV5:      d.CapsuleImageV5,
 		Background:          d.Background,
+		BackgroundRaw:       d.BackgroundRaw,
+		LegalNotice:         d.LegalNotice,
+		DRMNotice:           d.DRMNotice,
+		ExtUserAccount:      d.ExtUserAccount,
+		PCRequirements:      parseRequirements(d.PCRequirements),
+		MacRequirements:     parseRequirements(d.MacRequirements),
+		LinuxRequirements:   parseRequirements(d.LinuxRequirements),
+		Ratings:             mapRatings(d.Ratings),
 		URL:                 StoreURL + "/app/" + appid,
 		ReviewsRef:          appid,
 		NewsRef:             appid,
 	}
 	if d.PriceOverview != nil {
 		app.Price = &Price{
-			Currency:       d.PriceOverview.Currency,
-			Initial:        d.PriceOverview.Initial,
-			Final:          d.PriceOverview.Final,
-			DiscountPct:    d.PriceOverview.DiscountPercent,
-			FinalFormatted: d.PriceOverview.FinalFormatted,
+			Currency:         d.PriceOverview.Currency,
+			Initial:          d.PriceOverview.Initial,
+			Final:            d.PriceOverview.Final,
+			DiscountPct:      d.PriceOverview.DiscountPercent,
+			InitialFormatted: d.PriceOverview.InitialFormatted,
+			FinalFormatted:   d.PriceOverview.FinalFormatted,
 		}
 	}
 	if d.Platforms != nil {
@@ -194,6 +288,13 @@ func toApp(d *appData, appid string) *App {
 	}
 	if d.Achievements != nil {
 		app.AchievementsTotal = d.Achievements.Total
+		for _, h := range d.Achievements.Highlighted {
+			name := h.LocalizedName
+			if name == "" {
+				name = h.Name
+			}
+			app.HighlightedAchievements = append(app.HighlightedAchievements, AchievementInfo{Name: name, Icon: h.Path})
+		}
 	}
 	if d.SupportInfo != nil {
 		app.SupportURL = d.SupportInfo.URL
@@ -223,11 +324,85 @@ func toApp(d *appData, appid string) *App {
 		app.DLC = append(app.DLC, GameLink{AppID: s})
 		app.DLCRefs = append(app.DLCRefs, s)
 	}
+	seenPkg := map[string]bool{}
 	for _, id := range d.Packages {
+		s := strconv.Itoa(id)
 		app.Packages = append(app.Packages, id)
-		app.PackageRefs = append(app.PackageRefs, strconv.Itoa(id))
+		app.PackageRefs = append(app.PackageRefs, s)
+		seenPkg[s] = true
+	}
+	for _, g := range d.PackageGroups {
+		for _, sub := range g.Subs {
+			s := strconv.Itoa(sub.PackageID)
+			app.BuyOptions = append(app.BuyOptions, BuyOption{
+				PackageID:  s,
+				Text:       strings.TrimSpace(sub.OptionText),
+				PriceCents: sub.PriceInCentsWithDiscount,
+				SavingsPct: sub.PercentSavings,
+				IsFree:     sub.IsFreeLicense,
+			})
+			if !seenPkg[s] {
+				seenPkg[s] = true
+				app.PackageRefs = append(app.PackageRefs, s)
+			}
+		}
+	}
+	for _, dm := range d.Demos {
+		s := string(dm.AppID)
+		if s == "" {
+			continue
+		}
+		app.Demos = append(app.Demos, GameLink{AppID: s, Name: dm.Description})
+		app.DemoRefs = append(app.DemoRefs, s)
 	}
 	return app
+}
+
+// parseRequirements reads a per-platform requirements value. The store returns it
+// as an object {minimum, recommended} when the platform is supported and as an
+// empty array when it is not, so a value that is not a JSON object yields nil.
+func parseRequirements(raw json.RawMessage) *Requirements {
+	t := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(t, "{") {
+		return nil
+	}
+	var r struct {
+		Minimum     string `json:"minimum"`
+		Recommended string `json:"recommended"`
+	}
+	if json.Unmarshal(raw, &r) != nil || (r.Minimum == "" && r.Recommended == "") {
+		return nil
+	}
+	return &Requirements{Minimum: r.Minimum, Recommended: r.Recommended}
+}
+
+// mapRatings turns the ratings object into a board-sorted slice, so the same app
+// always lists its boards in the same order.
+func mapRatings(raw map[string]json.RawMessage) []Rating {
+	if len(raw) == 0 {
+		return nil
+	}
+	boards := make([]string, 0, len(raw))
+	for b := range raw {
+		boards = append(boards, b)
+	}
+	sort.Strings(boards)
+	var out []Rating
+	for _, b := range boards {
+		var w ratingWire
+		if json.Unmarshal(raw[b], &w) != nil {
+			continue
+		}
+		out = append(out, Rating{
+			Board:       b,
+			Rating:      w.Rating,
+			RequiredAge: w.RequiredAge,
+			Descriptors: squish(w.Descriptors),
+			Banned:      w.Banned,
+			UseAgeGate:  w.UseAgeGate,
+		})
+	}
+	return out
 }
 
 var (

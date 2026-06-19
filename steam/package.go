@@ -18,10 +18,10 @@ type packageEnvelope map[string]struct {
 }
 
 type packageData struct {
-	Name        string `json:"name"`
-	PageContent string `json:"page_content"`
-	HeaderImage string `json:"header_image"`
-	Apps        []struct {
+	Name      string `json:"name"`
+	PageImage string `json:"page_image"`
+	SmallLogo string `json:"small_logo"`
+	Apps      []struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"apps"`
@@ -29,9 +29,13 @@ type packageData struct {
 		Currency        string `json:"currency"`
 		Initial         int    `json:"initial"`
 		Final           int    `json:"final"`
+		Individual      int    `json:"individual"`
 		DiscountPercent int    `json:"discount_percent"`
 	} `json:"price"`
-	Platforms   *platformsWire `json:"platforms"`
+	Platforms  *platformsWire `json:"platforms"`
+	Controller *struct {
+		FullGamepad bool `json:"full_gamepad"`
+	} `json:"controller"`
 	ReleaseDate *struct {
 		ComingSoon bool   `json:"coming_soon"`
 		Date       string `json:"date"`
@@ -67,19 +71,23 @@ func (c *Client) Package(ctx context.Context, packageid string) (*Package, error
 
 func packageToRecord(d *packageData, packageid string) *Package {
 	p := &Package{
-		ID:          packageid,
-		Name:        d.Name,
-		Description: d.PageContent,
-		HeaderImage: d.HeaderImage,
-		URL:         StoreURL + "/sub/" + packageid,
+		ID:        packageid,
+		Name:      d.Name,
+		PageImage: d.PageImage,
+		SmallLogo: d.SmallLogo,
+		URL:       StoreURL + "/sub/" + packageid,
 	}
 	if d.Price != nil {
 		p.Price = &Price{
 			Currency:    d.Price.Currency,
 			Initial:     d.Price.Initial,
 			Final:       d.Price.Final,
+			Individual:  d.Price.Individual,
 			DiscountPct: d.Price.DiscountPercent,
 		}
+	}
+	if d.Controller != nil && d.Controller.FullGamepad {
+		p.Controller = "full_gamepad"
 	}
 	if d.Platforms != nil {
 		p.Platforms = &Platforms{Windows: d.Platforms.Windows, Mac: d.Platforms.Mac, Linux: d.Platforms.Linux}
