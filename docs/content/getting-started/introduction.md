@@ -26,8 +26,10 @@ appid:
 
 Because the appid keys the store entry, its reviews, its news, its player count,
 and its achievements, every record links into one graph. A search hit points at
-an app, an app points at its DLC, packages, reviews, and news, a review points at
-its author's profile, and a profile points at its most-played apps.
+an app, an app points at its DLC, demos, packages, reviews, and news, a review
+points at its author's profile, and a profile points at its most-played apps.
+`browse` pages the whole catalog as the discovery seed, and `crawl` walks those
+typed edges breadth-first from any app, package, or profile.
 
 ## How it is built
 

@@ -54,26 +54,48 @@ type App struct {
 	MetacriticURL       string     `json:"metacritic_url,omitempty" table:"-"`
 	Recommendations     int        `json:"recommendations,omitempty" table:"-"`
 	AchievementsTotal   int        `json:"achievements_total,omitempty" table:"-"`
-	ReviewScore         string     `json:"review_score,omitempty" table:"-"` // from the store-page island
+	ReviewScore         string     `json:"review_score,omitempty" table:"-"` // schema.org rating from the store-page island
 	Website             string     `json:"website,omitempty" table:"-"`
 	HeaderImage         string     `json:"header_image,omitempty" table:"-"`
+	CapsuleImage        string     `json:"capsule_image,omitempty" table:"-"`
+	CapsuleImageV5      string     `json:"capsule_image_v5,omitempty" table:"-"`
 	Background          string     `json:"background,omitempty" table:"-"`
+	BackgroundRaw       string     `json:"background_raw,omitempty" table:"-"`
 	Screenshots         []Media    `json:"screenshots,omitempty" table:"-"`
 	Movies              []Media    `json:"movies,omitempty" table:"-"`
 	Tags                []string   `json:"tags,omitempty" table:"-"` // user tags from the store-page island
 	ContentDescriptors  []string   `json:"content_descriptors,omitempty" table:"-"`
+	Ratings             []Rating   `json:"ratings,omitempty" table:"-"` // per-board content ratings
 	SupportURL          string     `json:"support_url,omitempty" table:"-"`
 	SupportEmail        string     `json:"support_email,omitempty" table:"-"`
+	LegalNotice         string     `json:"legal_notice,omitempty" table:"-"`
+	DRMNotice           string     `json:"drm_notice,omitempty" table:"-"`
+	ExtUserAccount      string     `json:"ext_user_account_notice,omitempty" table:"-"`
+
+	// System requirements per platform (the source carries them as HTML).
+	PCRequirements    *Requirements `json:"pc_requirements,omitempty" table:"-"`
+	MacRequirements   *Requirements `json:"mac_requirements,omitempty" table:"-"`
+	LinuxRequirements *Requirements `json:"linux_requirements,omitempty" table:"-"`
+
+	// Review summary from the appreviews query_summary (folded in best-effort).
+	ReviewScoreDesc string `json:"review_score_desc,omitempty" table:"-"` // e.g. "Overwhelmingly Positive"
+	TotalReviews    int    `json:"total_reviews,omitempty" table:"-"`
+	TotalPositive   int    `json:"total_positive,omitempty" table:"-"`
+	TotalNegative   int    `json:"total_negative,omitempty" table:"-"`
 
 	// Embedded relations the source fills inline.
-	Fullgame *GameLink  `json:"fullgame,omitempty" table:"-"` // set when this app is DLC or a demo
-	DLC      []GameLink `json:"dlc,omitempty" table:"-"`
-	Packages []int      `json:"packages,omitempty" table:"-"`
+	Fullgame                *GameLink         `json:"fullgame,omitempty" table:"-"` // set when this app is DLC or a demo
+	DLC                     []GameLink        `json:"dlc,omitempty" table:"-"`
+	Demos                   []GameLink        `json:"demos,omitempty" table:"-"`
+	Packages                []int             `json:"packages,omitempty" table:"-"`
+	BuyOptions              []BuyOption       `json:"buy_options,omitempty" table:"-"` // from package_groups
+	HighlightedAchievements []AchievementInfo `json:"highlighted_achievements,omitempty" table:"-"`
 
 	URL string `json:"url"` // the store page
 
 	// Graph edges (one per slice element).
 	DLCRefs     []string `json:"dlc_refs,omitempty" table:"-" kit:"link,kind=steam/app"`
+	DemoRefs    []string `json:"demo_refs,omitempty" table:"-" kit:"link,kind=steam/app"`
 	FullgameRef string   `json:"fullgame_ref,omitempty" table:"-" kit:"link,kind=steam/app"`
 	PackageRefs []string `json:"package_refs,omitempty" table:"-" kit:"link,kind=steam/package"`
 	ReviewsRef  string   `json:"reviews_ref,omitempty" table:"-" kit:"link,kind=steam/reviews"` // = ID
@@ -108,12 +130,13 @@ type Review struct {
 type Package struct {
 	ID          string     `json:"id" kit:"id"` // packageid
 	Name        string     `json:"name,omitempty" table:",truncate"`
-	Description string     `json:"description,omitempty" table:"-" kit:"body"`
 	Price       *Price     `json:"price,omitempty" table:"-"`
 	Platforms   *Platforms `json:"platforms,omitempty" table:"-"`
+	Controller  string     `json:"controller,omitempty" table:"-"` // e.g. full_gamepad
 	ReleaseDate string     `json:"release_date,omitempty"`
 	ComingSoon  bool       `json:"coming_soon,omitempty" table:"-"`
-	HeaderImage string     `json:"header_image,omitempty" table:"-"`
+	PageImage   string     `json:"page_image,omitempty" table:"-"`
+	SmallLogo   string     `json:"small_logo,omitempty" table:"-"`
 	Apps        []GameLink `json:"apps,omitempty" table:"-"`
 	URL         string     `json:"url"`
 	AppRefs     []string   `json:"app_refs,omitempty" table:"-" kit:"link,kind=steam/app"`
@@ -129,6 +152,7 @@ type NewsItem struct {
 	Body      string `json:"body,omitempty" table:",truncate" kit:"body"`
 	FeedLabel string `json:"feed_label,omitempty" table:"-"`
 	FeedName  string `json:"feed_name,omitempty" table:"-"`
+	FeedType  int    `json:"feed_type,omitempty" table:"-"`
 	External  bool   `json:"external,omitempty" table:"-"`
 	Date      string `json:"date,omitempty"`
 }
@@ -227,11 +251,63 @@ type Ref struct {
 // Price is an app or package price. The amounts are in the currency's minor unit
 // (cents for USD).
 type Price struct {
-	Currency       string `json:"currency,omitempty"`
-	Initial        int    `json:"initial,omitempty"`
-	Final          int    `json:"final,omitempty"`
-	DiscountPct    int    `json:"discount_pct,omitempty"`
-	FinalFormatted string `json:"final_formatted,omitempty"`
+	Currency         string `json:"currency,omitempty"`
+	Initial          int    `json:"initial,omitempty"`
+	Final            int    `json:"final,omitempty"`
+	Individual       int    `json:"individual,omitempty"` // packages: the unbundled total
+	DiscountPct      int    `json:"discount_pct,omitempty"`
+	InitialFormatted string `json:"initial_formatted,omitempty"`
+	FinalFormatted   string `json:"final_formatted,omitempty"`
+}
+
+// Requirements is the system requirements for one platform, as the store returns
+// them (HTML fragments, kept verbatim).
+type Requirements struct {
+	Minimum     string `json:"minimum,omitempty"`
+	Recommended string `json:"recommended,omitempty"`
+}
+
+// Rating is one content-rating board's verdict for an app (USK, DEJUS, ESRB,
+// PEGI, steam_germany, igrs, and others), keyed by the board name.
+type Rating struct {
+	Board       string `json:"board"` // usk, dejus, esrb, pegi, steam_germany, igrs, ...
+	Rating      string `json:"rating,omitempty"`
+	RequiredAge string `json:"required_age,omitempty"`
+	Descriptors string `json:"descriptors,omitempty"`
+	Banned      string `json:"banned,omitempty"`
+	UseAgeGate  string `json:"use_age_gate,omitempty"`
+}
+
+// BuyOption is one purchase option from an app's package_groups: a sub a reader
+// can buy, with its price and any discount.
+type BuyOption struct {
+	PackageID  string `json:"package_id"`
+	Text       string `json:"text,omitempty"`        // the human option label
+	PriceCents int    `json:"price_cents,omitempty"` // price with the current discount
+	SavingsPct int    `json:"savings_pct,omitempty"`
+	IsFree     bool   `json:"is_free,omitempty"`
+}
+
+// AchievementInfo is one highlighted achievement's display name and icon, folded
+// in from appdetails. The percentages endpoint gives only api names, so this is
+// the only keyless source of an achievement's localized name and icon.
+type AchievementInfo struct {
+	Name string `json:"name"`
+	Icon string `json:"icon,omitempty"` // the full icon URL
+}
+
+// CrawlNode is one record visited by a breadth-first walk of the public graph,
+// emitted by crawl. The id is a "kind:ref" composite so nodes of different kinds
+// never collide; edges lists the "kind:ref" neighbors the walk found.
+type CrawlNode struct {
+	ID     string   `json:"id" kit:"id"` // "kind:ref"
+	Kind   string   `json:"kind"`
+	Ref    string   `json:"ref"`
+	Name   string   `json:"name,omitempty" table:",truncate"`
+	Depth  int      `json:"depth"`
+	Parent string   `json:"parent,omitempty" table:"-"`
+	URL    string   `json:"url"`
+	Edges  []string `json:"edges,omitempty" table:"-"`
 }
 
 // Platforms is the set of operating systems an app or package supports.

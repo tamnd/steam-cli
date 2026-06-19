@@ -109,7 +109,7 @@ func URLFor(kind, id string) string {
 			return ""
 		}
 		return CommunityURL + "/id/" + id
-	case "search":
+	case "search", "browse":
 		return StoreURL + "/search/"
 	case "featured":
 		return StoreURL + "/"

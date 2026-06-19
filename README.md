@@ -21,9 +21,11 @@ the universal key:
 
 Because the appid keys the store entry, its reviews, its news, its player count,
 and its achievements, every record links into one graph: a search hit points at
-an app, an app points at its DLC, packages, reviews, and news, a review points at
-its author's profile, and a profile points at its most-played apps. No record is
-a dead leaf.
+an app, an app points at its DLC, demos, packages, reviews, and news, a review
+points at its author's profile, and a profile points at its most-played apps. No
+record is a dead leaf. `st browse` pages the whole catalog as the discovery seed,
+and `st crawl` walks those typed edges breadth-first from any app, package, or
+profile.
 
 The same package is also a [resource-URI driver](#use-it-as-a-resource-uri-driver),
 so a host program like [ant](https://github.com/tamnd/ant) can address Steam as
@@ -48,6 +50,8 @@ docker run --rm ghcr.io/tamnd/st:latest --help
 st app 620                           # one store app in full (by appid or store URL)
 st app 620 -o json                   # as JSON, ready for jq
 st search portal                     # search the store for apps
+st browse --sort Released_DESC       # page through the whole catalog (the discovery seed)
+st crawl 620 --depth 2               # walk the graph breadth-first from a seed
 st reviews 620 -n 50                 # an app's user reviews (cursor-paged)
 st package 7877                      # a package (sub) with the apps it bundles
 st featured                          # the featured store categories' apps

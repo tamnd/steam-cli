@@ -85,6 +85,18 @@ func (Domain) Register(app *kit.App) {
 	}, search)
 
 	kit.Handle(app, kit.OpMeta{
+		Name: "browse", Group: "store", List: true,
+		Summary: "Page through the whole store catalog (the discovery seed)",
+		URIType: "browse",
+	}, browse)
+
+	kit.Handle(app, kit.OpMeta{
+		Name: "crawl", Group: "store", List: true,
+		Summary: "Walk the public graph breadth-first from a seed app, package, or profile",
+		Args:    []kit.Arg{{Name: "ref", Help: "a seed app, package, or profile (an id or a URL)"}},
+	}, crawl)
+
+	kit.Handle(app, kit.OpMeta{
 		Name: "reviews", Group: "store", List: true,
 		Summary: "List an app's user reviews (cursor-paged)",
 		URIType: "reviews",

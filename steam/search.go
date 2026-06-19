@@ -18,13 +18,14 @@ type storeSearchResponse struct {
 }
 
 type storeSearchItem struct {
-	Type      string         `json:"type"`
-	Name      string         `json:"name"`
-	ID        int            `json:"id"`
-	TinyImage string         `json:"tiny_image"`
-	Metascore string         `json:"metascore"`
-	Platforms *platformsWire `json:"platforms"`
-	Price     *struct {
+	Type              string         `json:"type"`
+	Name              string         `json:"name"`
+	ID                int            `json:"id"`
+	TinyImage         string         `json:"tiny_image"`
+	Metascore         string         `json:"metascore"`
+	ControllerSupport string         `json:"controller_support"`
+	Platforms         *platformsWire `json:"platforms"`
+	Price             *struct {
 		Currency string `json:"currency"`
 		Initial  int    `json:"initial"`
 		Final    int    `json:"final"`
@@ -52,13 +53,14 @@ func (c *Client) Search(ctx context.Context, term string, limit int) ([]*App, er
 func searchItemToApp(it *storeSearchItem) *App {
 	id := strconv.Itoa(it.ID)
 	app := &App{
-		ID:          id,
-		Name:        it.Name,
-		Type:        it.Type,
-		HeaderImage: it.TinyImage,
-		URL:         StoreURL + "/app/" + id,
-		ReviewsRef:  id,
-		NewsRef:     id,
+		ID:                id,
+		Name:              it.Name,
+		Type:              it.Type,
+		HeaderImage:       it.TinyImage,
+		ControllerSupport: it.ControllerSupport,
+		URL:               StoreURL + "/app/" + id,
+		ReviewsRef:        id,
+		NewsRef:           id,
 	}
 	if it.Metascore != "" {
 		if n, err := strconv.Atoi(it.Metascore); err == nil {
